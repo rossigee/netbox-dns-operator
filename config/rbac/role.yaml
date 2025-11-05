@@ -1,0 +1,52 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: manager-role
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - configmaps
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - secrets
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - netbox-dns-operator.rossigee.github.com
+  resources:
+  - netboxdnsoperators
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - netbox-dns-operator.rossigee.github.com
+  resources:
+  - netboxdnsoperators/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - netbox-dns-operator.rossigenerate.com
+  resources:
+  - netboxdnsoperators/finalizers
+  verbs:
+  - update

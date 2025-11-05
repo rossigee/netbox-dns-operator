@@ -1,0 +1,9 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# This kustomization.yaml is not intended to be run by itself,
+# since it depends on being part of a larger aggregation.
+# It should be included in other kustomizations.
+
+resources:
+- bases/netbox-dns-operator.rossigee.github.com_netboxdnsoperators.yaml
