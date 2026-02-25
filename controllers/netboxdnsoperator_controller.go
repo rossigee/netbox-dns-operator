@@ -86,13 +86,13 @@ func (r *NetBoxDNSOperatorReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	logger.Info("Reconciling NetBoxDNSOperator", "name", operator.Name)
 
 	// Fetch NetBox data
-	devices, err := r.fetchNetBoxDevices(operator.Spec.NetBoxURL, operator.Spec.NetBoxToken)
+	devices, err := r.fetchNetBoxDevices(ctx, operator.Spec.NetBoxURL, operator.Spec.NetBoxToken)
 	if err != nil {
 		logger.Error(err, "Failed to fetch NetBox devices")
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, err
 	}
 
-	ips, err := r.fetchNetBoxIPs(operator.Spec.NetBoxURL, operator.Spec.NetBoxToken)
+	ips, err := r.fetchNetBoxIPs(ctx, operator.Spec.NetBoxURL, operator.Spec.NetBoxToken)
 	if err != nil {
 		logger.Error(err, "Failed to fetch NetBox IPs")
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, err
@@ -118,7 +118,9 @@ func (r *NetBoxDNSOperatorReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	// Determine requeue interval
 	requeueAfter := 5 * time.Minute // default
 	if operator.Spec.ReloadInterval != "" {
-		if parsed, err := time.ParseDuration(operator.Spec.ReloadInterval); err == nil {
+		if parsed, err := time.ParseDuration(operator.Spec.ReloadInterval); err != nil {
+			logger.Error(err, "Invalid reloadInterval, using default", "reloadInterval", operator.Spec.ReloadInterval)
+		} else {
 			requeueAfter = parsed
 		}
 	}
@@ -128,14 +130,16 @@ func (r *NetBoxDNSOperatorReconciler) Reconcile(ctx context.Context, req ctrl.Re
 }
 
 // fetchNetBoxDevices fetches device information from NetBox
-func (r *NetBoxDNSOperatorReconciler) fetchNetBoxDevices(netboxURL, token string) ([]Device, error) {
-	ctx := context.Background()
+func (r *NetBoxDNSOperatorReconciler) fetchNetBoxDevices(ctx context.Context, netboxURL, token string) ([]Device, error) {
+	ctxWithTimeout, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
 	c := netbox.NewAPIClientFor(netboxURL, token)
 
 	devices := []Device{}
 
 	// Fetch all devices
-	res, _, err := c.DcimAPI.DcimDevicesList(ctx).Execute()
+	res, _, err := c.DcimAPI.DcimDevicesList(ctxWithTimeout).Execute()
 	if err != nil {
 		return nil, fmt.Errorf("failed to list devices: %w", err)
 	}
@@ -146,11 +150,13 @@ func (r *NetBoxDNSOperatorReconciler) fetchNetBoxDevices(netboxURL, token string
 			d.Name = *device.Name.Get()
 		}
 		if device.PrimaryIp4.IsSet() {
-			ip4 := device.PrimaryIp4.Get()
-			d.PrimaryIP = ip4.Address
+			if ip4 := device.PrimaryIp4.Get(); ip4 != nil {
+				d.PrimaryIP = ip4.Address
+			}
 		} else if device.PrimaryIp6.IsSet() {
-			ip6 := device.PrimaryIp6.Get()
-			d.PrimaryIP = ip6.Address
+			if ip6 := device.PrimaryIp6.Get(); ip6 != nil {
+				d.PrimaryIP = ip6.Address
+			}
 		}
 		devices = append(devices, d)
 	}
@@ -159,14 +165,16 @@ func (r *NetBoxDNSOperatorReconciler) fetchNetBoxDevices(netboxURL, token string
 }
 
 // fetchNetBoxIPs fetches IP address information from NetBox
-func (r *NetBoxDNSOperatorReconciler) fetchNetBoxIPs(netboxURL, token string) ([]IPAddress, error) {
-	ctx := context.Background()
+func (r *NetBoxDNSOperatorReconciler) fetchNetBoxIPs(ctx context.Context, netboxURL, token string) ([]IPAddress, error) {
+	ctxWithTimeout, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
 	c := netbox.NewAPIClientFor(netboxURL, token)
 
 	ips := []IPAddress{}
 
 	// Fetch all IP addresses
-	res, _, err := c.IpamAPI.IpamIpAddressesList(ctx).Execute()
+	res, _, err := c.IpamAPI.IpamIpAddressesList(ctxWithTimeout).Execute()
 	if err != nil {
 		return nil, fmt.Errorf("failed to list IP addresses: %w", err)
 	}
@@ -238,8 +246,14 @@ func (r *NetBoxDNSOperatorReconciler) ipToReverse(ipStr string) string {
 		}
 		return strings.Join(parts, ".")
 	}
-	// IPv6 - simplified, would need proper IPv6 reverse logic
-	return ipStr
+	// IPv6
+	bytes := ip.To16()
+	var nibbles []string
+	for i := len(bytes) - 1; i >= 0; i-- {
+		nibbles = append(nibbles, fmt.Sprintf("%x", bytes[i]>>4))
+		nibbles = append(nibbles, fmt.Sprintf("%x", bytes[i]&0xF))
+	}
+	return strings.Join(nibbles, ".")
 }
 
 // updateZoneConfigMap updates or creates a ConfigMap for a DNS zone
@@ -286,7 +300,7 @@ func (r *NetBoxDNSOperatorReconciler) updateOperatorStatus(ctx context.Context, 
 	}
 
 	for zoneName, zoneData := range zones {
-		recordCount := strings.Count(zoneData, "\n") - 4 // Subtract SOA header lines
+		recordCount := strings.Count(zoneData, " IN ") // Count DNS records
 		serial := time.Now().Format("2006010215")
 
 		status.ZoneStatus[zoneName] = netboxv1.ZoneStatus{

@@ -22,18 +22,22 @@ import (
 // NetBoxDNSOperatorSpec defines the desired state of NetBoxDNSOperator
 type NetBoxDNSOperatorSpec struct {
 	// NetBoxURL is the URL of the NetBox instance
+	// +kubebuilder:validation:Format=uri
 	NetBoxURL string `json:"netboxURL"`
 
 	// NetBoxToken is the API token for NetBox authentication
+	// +kubebuilder:validation:MinLength=1
 	NetBoxToken string `json:"netboxToken"`
 
 	// Zones is the list of DNS zones to manage
+	// +kubebuilder:validation:MinItems=1
 	Zones []string `json:"zones,omitempty"`
 
 	// ReloadInterval is how often to check for NetBox changes (default: 5m)
 	ReloadInterval string `json:"reloadInterval,omitempty"`
 
 	// WebhookURL is the URL for NetBox webhooks (optional)
+	// +kubebuilder:validation:Format=uri
 	WebhookURL string `json:"webhookURL,omitempty"`
 }
 

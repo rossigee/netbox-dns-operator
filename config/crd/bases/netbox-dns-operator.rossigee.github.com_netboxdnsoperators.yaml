@@ -41,9 +41,11 @@ spec:
             properties:
               netboxToken:
                 description: NetBoxToken is the API token for NetBox authentication
+                minLength: 1
                 type: string
               netboxURL:
                 description: NetBoxURL is the URL of the NetBox instance
+                format: uri
                 type: string
               reloadInterval:
                 description: 'ReloadInterval is how often to check for NetBox changes
@@ -51,11 +53,13 @@ spec:
                 type: string
               webhookURL:
                 description: WebhookURL is the URL for NetBox webhooks (optional)
+                format: uri
                 type: string
               zones:
                 description: Zones is the list of DNS zones to manage
                 items:
                   type: string
+                minItems: 1
                 type: array
             required:
             - netboxToken

@@ -16,12 +16,14 @@ limitations under the License.
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"net/http"
 	"os"
 	stdruntime "runtime"
 	"runtime/debug"
+	"time"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -30,6 +32,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	"github.com/rossigee/netbox-dns-operator/api/v1"
@@ -55,9 +58,11 @@ func main() {
 	var enableLeaderElection bool
 	var probeAddr string
 	var webhookAddr string
+	var webhookToken string
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
 	flag.StringVar(&webhookAddr, "webhook-bind-address", ":8082", "The address the webhook endpoint binds to.")
+	flag.StringVar(&webhookToken, "webhook-token", "", "Token for webhook authentication (optional)")
 	flag.BoolVar(&enableLeaderElection, "leader-elect", false,
 		"Enable leader election for controller manager. "+
 			"Enabling this will ensure there is only one active controller manager.")
@@ -109,27 +114,66 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Start webhook server
-	go func() {
-		http.HandleFunc("/webhook", func(w http.ResponseWriter, r *http.Request) {
-			if r.Method != http.MethodPost {
-				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-				return
-			}
-			var payload map[string]interface{}
-			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-				http.Error(w, "Bad request", http.StatusBadRequest)
-				return
-			}
-			setupLog.Info("Received webhook", "payload", payload)
-			// TODO: Trigger reconciliation for affected operators
-			w.WriteHeader(http.StatusOK)
-		})
-		setupLog.Info("Starting webhook server", "address", webhookAddr)
-		if err := http.ListenAndServe(webhookAddr, nil); err != nil {
-			setupLog.Error(err, "webhook server failed")
+	// Setup webhook server
+	mux := http.NewServeMux()
+	mux.HandleFunc("/webhook", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
 		}
-	}()
+		if webhookToken != "" {
+			auth := r.Header.Get("Authorization")
+			if auth != "Bearer "+webhookToken {
+				http.Error(w, "Unauthorized", http.StatusUnauthorized)
+				return
+			}
+		}
+		defer func() { _ = r.Body.Close() }()
+		var payload map[string]interface{}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			http.Error(w, "Bad request", http.StatusBadRequest)
+			return
+		}
+		setupLog.Info("Received webhook", "payload", payload)
+		// Trigger reconciliation for all operators
+		client := mgr.GetClient()
+		operators := &v1.NetBoxDNSOperatorList{}
+		if err := client.List(context.Background(), operators); err != nil {
+			setupLog.Error(err, "failed to list operators")
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+		for _, op := range operators.Items {
+			if op.Annotations == nil {
+				op.Annotations = make(map[string]string)
+			}
+			op.Annotations["netbox-dns-operator/trigger"] = time.Now().Format(time.RFC3339)
+			if err := client.Update(context.Background(), &op); err != nil {
+				setupLog.Error(err, "failed to update operator for trigger", "operator", op.Name)
+			}
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+	server := &http.Server{Addr: webhookAddr, Handler: mux}
+
+	// Add webhook server to manager for graceful shutdown
+	if err := mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
+		setupLog.Info("Starting webhook server", "address", webhookAddr)
+		errChan := make(chan error, 1)
+		go func() {
+			errChan <- server.ListenAndServe()
+		}()
+		select {
+		case err := <-errChan:
+			return err
+		case <-ctx.Done():
+			setupLog.Info("Shutting down webhook server")
+			return server.Shutdown(context.Background())
+		}
+	})); err != nil {
+		setupLog.Error(err, "unable to add webhook server to manager")
+		os.Exit(1)
+	}
 
 	setupLog.Info("starting manager")
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {

@@ -116,8 +116,8 @@ GOLANGCI_LINT = $(shell pwd)/bin/golangci-lint
 .PHONY: golangci-lint
 golangci-lint: ## Download golangci-lint locally if necessary.
 	@[ -f $(GOLANGCI_LINT) ] || { \
-		echo "Downloading golangci-lint v2.6.1" ; \
-		curl -sSfL https://github.com/golangci/golangci-lint/releases/download/v2.6.1/golangci-lint-2.6.1-linux-amd64.tar.gz | tar -xz -C bin --strip-components=1 golangci-lint-2.6.1-linux-amd64/golangci-lint ; \
+		echo "Downloading golangci-lint v2.9.0" ; \
+		curl -sSfL https://github.com/golangci/golangci-lint/releases/download/v2.9.0/golangci-lint-2.9.0-linux-amd64.tar.gz | tar -xz -C bin --strip-components=1 golangci-lint-2.9.0-linux-amd64/golangci-lint ; \
 	}
 
 # go-get-tool will 'go get' any package $2 and install it to $1.
